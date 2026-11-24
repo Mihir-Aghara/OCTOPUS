@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { KeyRound, Lock, ArrowRight } from 'lucide-react';
 import { audioEngine } from '../services/audioEngine';
 
-export default function RetrievePanel({ onRetrieve, showToast, initialCode = '' }) {
+export default function RetrievePanel({ onRetrieve, onSubmit, showToast, initialCode = '' }) {
   const [digits, setDigits] = useState(['', '', '', '', '', '']);
   const [passcode, setPasscode] = useState('');
   const [needsPasscode, setNeedsPasscode] = useState(false);
@@ -79,18 +79,17 @@ export default function RetrievePanel({ onRetrieve, showToast, initialCode = '' 
 
     setLoading(true);
     try {
-      const res = await onRetrieve(code, passcode);
-      if (res && res.requiresPasscode) {
-        setNeedsPasscode(true);
-        audioEngine.play('click');
-        showToast('This clip is encrypted with a passcode.', 'info');
-      } else {
-        audioEngine.play('retrieve');
-        showToast('Clip retrieved successfully!', 'success');
+      const handler = onRetrieve || onSubmit;
+      if (handler) {
+        const res = await handler(code, passcode);
+        if (res && res.requiresPasscode) {
+          setNeedsPasscode(true);
+          audioEngine.play('click');
+          showToast('This clip is encrypted with a passcode. Please enter it below.', 'info');
+        }
       }
     } catch (err) {
-      audioEngine.play('error');
-      showToast(err.message || 'Failed to retrieve clip.', 'error');
+      // Parent component handles sound and toast
     } finally {
       setLoading(false);
     }

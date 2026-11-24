@@ -6,7 +6,7 @@ import {
 import { audioEngine } from '../services/audioEngine';
 import { detectLanguage } from '../services/cryptoUtils';
 
-export default function SendPanel({ onClipCreated, showToast }) {
+export default function SendPanel({ onClipCreated, onSubmit, showToast }) {
   const [activeTab, setActiveTab] = useState('text'); // 'text', 'image', 'file'
   const [textContent, setTextContent] = useState('');
   const [title, setTitle] = useState('');
@@ -99,15 +99,18 @@ export default function SendPanel({ onClipCreated, showToast }) {
         };
       }
 
-      await onClipCreated({
-        type: activeTab === 'text' ? (detectedLang !== 'plaintext' ? 'code' : 'text') : activeTab,
-        content: finalContent,
-        title: title.trim(),
-        passcode: passcode.trim(),
-        burnOnRead,
-        expiration,
-        metadata
-      });
+      const handler = onClipCreated || onSubmit;
+      if (handler) {
+        await handler({
+          type: activeTab === 'text' ? (detectedLang !== 'plaintext' ? 'code' : 'text') : activeTab,
+          content: finalContent,
+          title: title.trim(),
+          passcode: passcode.trim(),
+          burnOnRead,
+          expiration,
+          metadata
+        });
+      }
 
       setTextContent('');
       setTitle('');
@@ -115,7 +118,7 @@ export default function SendPanel({ onClipCreated, showToast }) {
       setAttachedFile(null);
       setFilePreview(null);
     } catch (err) {
-      showToast('Failed to create clip. Please try again.', 'error');
+      showToast(err.message || 'Failed to create clip. Please try again.', 'error');
     } finally {
       setLoading(false);
     }

@@ -31,34 +31,42 @@ export default function App() {
 
   useEffect(() => {
     const handleUrlHash = async () => {
-      const hash = window.location.hash.replace('#', '');
-      if (hash && hash.length >= 4) {
+      const hash = window.location.hash.replace('#', '').trim();
+      if (hash && hash.length === 6) {
         setInitialCode(hash);
         setActiveTab('retrieve');
         audioEngine.play('success');
       }
     };
     handleUrlHash();
+    window.addEventListener('hashchange', handleUrlHash);
+    return () => window.removeEventListener('hashchange', handleUrlHash);
   }, []);
 
-  const handleCreateClip = async ({ content, isEncrypted, passcode, isSelfDestruct, contentType }) => {
+  const handleCreateClip = async (clipData) => {
     try {
-      const result = await saveClip({ content, isEncrypted, passcode, isSelfDestruct, contentType });
+      const result = await saveClip(clipData);
       setCreatedClipResult(result);
       audioEngine.play('success');
       showToast('Clip created successfully!', 'success');
+      return result;
     } catch (err) {
       audioEngine.play('error');
       showToast(err.message || 'Failed to create clip', 'error');
+      throw err;
     }
   };
 
   const handleRetrieveClip = async (code, passcode) => {
     try {
       const result = await getClip(code, passcode);
+      if (result && result.requiresPasscode) {
+        return result;
+      }
       setRetrievedClip(result);
       audioEngine.play('success');
       showToast('Clip retrieved successfully!', 'success');
+      return result;
     } catch (err) {
       audioEngine.play('error');
       showToast(err.message || 'Failed to retrieve clip', 'error');
@@ -71,9 +79,14 @@ export default function App() {
     setRetrievedClip(clipData);
   };
 
-  const handleSelectFromVault = (clipData) => {
-    setRetrievedClip(clipData);
+  const handleSelectFromVault = async (codeOrClip) => {
     setVaultOpen(false);
+    const code = typeof codeOrClip === 'string' ? codeOrClip : codeOrClip?.code;
+    if (code) {
+      try {
+        await handleRetrieveClip(code);
+      } catch (err) {}
+    }
   };
 
   return (
@@ -151,11 +164,13 @@ export default function App() {
             {/* TAB CONTENT */}
             {activeTab === 'send' ? (
               <SendPanel 
+                onClipCreated={handleCreateClip}
                 onSubmit={handleCreateClip} 
                 showToast={showToast}
               />
             ) : (
               <RetrievePanel 
+                onRetrieve={handleRetrieveClip}
                 onSubmit={handleRetrieveClip} 
                 initialCode={initialCode}
                 showToast={showToast}

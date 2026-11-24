@@ -97,9 +97,9 @@ function octopusApiPlugin() {
           let body = '';
           req.on('data', chunk => {
             body += chunk;
-            if (body.length > 5000000) { // 5MB payload limit
+            if (body.length > 70000000) { // 65MB payload limit
               res.statusCode = 413;
-              res.end(JSON.stringify({ error: 'Payload size exceeds 5MB limit.' }));
+              res.end(JSON.stringify({ error: 'Payload size exceeds 65MB limit.' }));
               req.destroy();
             }
           });
@@ -137,7 +137,7 @@ function octopusApiPlugin() {
             return;
           }
 
-          const code = req.url.replace('/api/clip/', '').trim();
+          const code = req.url.split('?')[0].replace('/api/clip/', '').replace(/\/$/, '').trim();
           
           // Strict Regex Whitelisting: 6 digits only
           if (!/^\d{6}$/.test(code)) {

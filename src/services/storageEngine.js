@@ -1,5 +1,7 @@
 import { generatePinCode, encryptPayload, decryptPayload } from './cryptoUtils';
+import { supabase } from './supabaseClient';
 
+const API_BASE = import.meta.env?.VITE_API_URL || '';
 const STORAGE_PREFIX = 'octopus_clip_';
 const VAULT_KEY = 'octopus_vault_history';
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('octopus_sync_channel') : null;
@@ -12,6 +14,10 @@ const inMemoryClips = new Map();
  */
 function safeSetLocalStorage(key, value) {
   try {
+    // Avoid saving very large files (>2MB) to localStorage to prevent quota crashes
+    if (value && value.length > 2500000) {
+      return;
+    }
     localStorage.setItem(key, value);
   } catch (err) {
     if (err && (err.name === 'QuotaExceededError' || err.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
@@ -95,21 +101,57 @@ export async function saveClip({
 
   // 2. Send payload to Secure Backend Proxy Route (/api/clip)
   try {
-    fetch('/api/clip', {
+    const res = await fetch(`${API_BASE}/api/clip`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(clipRecord)
-    }).catch(() => {});
-  } catch (err) {}
+      body: JSON.stringify({
+        code: pinCode,
+        type,
+        title: clipRecord.title,
+        content: payloadToStore,
+        isEncrypted,
+        burnOnRead,
+        expiration,
+        expireAt,
+        createdAt,
+        metadata
+      })
+    });
+    if (!res.ok) {
+      console.warn('Backend proxy responded with status:', res.status);
+    }
+  } catch (err) {
+    console.warn('Backend proxy unreachable, falling back to local/cloud storage:', err);
+  }
 
-  // 3. Broadcast across open tabs
+  // 3. Optional Supabase Cloud Sync (if configured on client)
+  if (supabase) {
+    try {
+      await supabase.from('octopus_clips').upsert([{
+        code: pinCode,
+        type,
+        title: clipRecord.title,
+        content: payloadToStore,
+        is_encrypted: isEncrypted,
+        burn_on_read: burnOnRead,
+        expiration,
+        expire_at: expireAt,
+        created_at: createdAt,
+        metadata
+      }]);
+    } catch (err) {
+      console.warn('Supabase client save warning:', err);
+    }
+  }
+
+  // 4. Broadcast across open tabs
   if (channel) {
     try {
       channel.postMessage({ type: 'CLIP_CREATED', clip: clipRecord });
     } catch (e) {}
   }
 
-  // 4. Save to Vault History
+  // 5. Save to Vault History
   addToVault({
     code: pinCode,
     type,
@@ -150,11 +192,41 @@ export async function getClip(code, passcode = '') {
   // Tier 3: Secure Backend Proxy API (/api/clip/:code)
   if (!clipRecord) {
     try {
-      const res = await fetch(`/api/clip/${pin}`);
+      const res = await fetch(`${API_BASE}/api/clip/${pin}`);
       if (res.ok) {
         clipRecord = await res.json();
       }
-    } catch (err) {}
+    } catch (err) {
+      console.warn('Backend proxy fetch failed:', err);
+    }
+  }
+
+  // Tier 4: Direct Supabase Cloud Fetch (if configured)
+  if (!clipRecord && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('octopus_clips')
+        .select('*')
+        .eq('code', pin)
+        .single();
+
+      if (data && !error) {
+        clipRecord = {
+          code: data.code,
+          type: data.type,
+          title: data.title,
+          content: data.content,
+          isEncrypted: data.is_encrypted,
+          burnOnRead: data.burn_on_read,
+          expiration: data.expiration,
+          expireAt: data.expire_at ? Number(data.expire_at) : null,
+          createdAt: Number(data.created_at),
+          metadata: data.metadata || {}
+        };
+      }
+    } catch (err) {
+      console.warn('Supabase client fetch warning:', err);
+    }
   }
 
   if (!clipRecord) {
@@ -162,8 +234,11 @@ export async function getClip(code, passcode = '') {
   }
 
   // Check expiration timestamp
-  if (clipRecord.expireAt && Date.now() > clipRecord.expireAt) {
+  if (clipRecord.expireAt && Date.now() > Number(clipRecord.expireAt)) {
     deleteClip(pin);
+    if (supabase) {
+      supabase.from('octopus_clips').delete().eq('code', pin).catch(() => {});
+    }
     throw new Error('This clip has expired and is no longer available.');
   }
 
@@ -191,6 +266,9 @@ export async function getClip(code, passcode = '') {
   // Handle Burn On Read self-destruct
   if (clipRecord.burnOnRead) {
     deleteClip(pin);
+    if (supabase) {
+      supabase.from('octopus_clips').delete().eq('code', pin).catch(() => {});
+    }
   } else {
     safeSetLocalStorage(key, JSON.stringify(clipRecord));
   }
